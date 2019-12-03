@@ -5,22 +5,56 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.content.res.TypedArray;
+import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
+import android.graphics.drawable.Drawable;
+import android.media.AudioManager;
+import android.media.MediaPlayer;
+import android.net.Uri;
 import android.os.Build;
 import android.os.CountDownTimer;
 import android.os.Handler;
 import android.os.IBinder;
 import android.support.annotation.Nullable;
+import android.support.v4.content.ContextCompat;
+import android.support.v4.view.ViewPager;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewStub;
 import android.view.WindowManager;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
+import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import com.yalantis.colormatchtabs.colormatchtabs.adapter.ColorTabAdapter;
+import com.yalantis.colormatchtabs.colormatchtabs.colortabs.ColorMatchTabLayout;
+import com.yalantis.colormatchtabs.colormatchtabs.listeners.OnColorTabSelectedListener;
+import com.yalantis.colormatchtabs.colormatchtabs.model.ColorTab;
+
+import org.w3c.dom.Text;
+
+import java.io.IOException;
+import java.util.List;
+
+import asr.com.floatingdictionary.api.ApiClientInstance;
+import asr.com.floatingdictionary.api.DataService;
+import asr.com.floatingdictionary.db.CambridgeDatabase;
+import asr.com.floatingdictionary.db.Word;
+import asr.com.floatingdictionary.db.WordDao;
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
 
 /**
  * Created by sonu on 28/03/17.
@@ -30,11 +64,25 @@ public class FloatingWidgetService extends Service implements View.OnClickListen
     private WindowManager mWindowManager;
     private View mFloatingWidgetView, collapsedView, expandedView;
     private TextView mfloatingWidgetTitleLabel;
+    private ColorMatchTabLayout colorMatchTabLayout;
+    private ViewPager viewPager;
     private ImageView remove_image_view;
     private Point szWindow = new Point();
     private View removeFloatingWidgetView;
 
     private int x_init_cord, y_init_cord, x_init_margin, y_init_margin;
+
+    // word
+    String wordSearch = "";
+
+    // room
+    private WordDao wordDao;
+
+    // change layout
+    RelativeLayout contenedorView;
+
+    // audio
+    boolean isPLAYING = false;
 
     //Variable to check if the Floating widget view is on left side or in right side
     // initially we are displaying Floating widget view to Left side so set it to true
@@ -72,6 +120,8 @@ public class FloatingWidgetService extends Service implements View.OnClickListen
         // clipboard
         mClipboardManager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         mClipboardManager.addPrimaryClipChangedListener(mOnPrimaryClipChangedListener);
+
+
     }
 
 
@@ -79,12 +129,13 @@ public class FloatingWidgetService extends Service implements View.OnClickListen
     private View addRemoveView(LayoutInflater inflater) {
         //Inflate the removing view layout we created
         removeFloatingWidgetView = inflater.inflate(R.layout.remove_floating_widget_layout, null);
-
+        int currentSDKVersion = android.os.Build.VERSION.SDK_INT;
+        int androidOversion = android.os.Build.VERSION_CODES.O;
         //Add the view to the window.
         WindowManager.LayoutParams paramRemove = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_PHONE,
+                currentSDKVersion >= androidOversion ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : WindowManager.LayoutParams.TYPE_PHONE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT);
 
@@ -93,7 +144,7 @@ public class FloatingWidgetService extends Service implements View.OnClickListen
 
         //Initially the Removing widget view is not visible, so set visibility to GONE
         removeFloatingWidgetView.setVisibility(View.GONE);
-        remove_image_view = (ImageView) removeFloatingWidgetView.findViewById(R.id.remove_img);
+        remove_image_view = removeFloatingWidgetView.findViewById(R.id.remove_img);
 
         //Add the view to the window
         mWindowManager.addView(removeFloatingWidgetView, paramRemove);
@@ -104,12 +155,14 @@ public class FloatingWidgetService extends Service implements View.OnClickListen
     private void addFloatingWidgetView(LayoutInflater inflater) {
         //Inflate the floating view layout we created
         mFloatingWidgetView = inflater.inflate(R.layout.floating_widget_layout, null);
-
+        contenedorView = mFloatingWidgetView.findViewById(R.id.conentedor);
+        int currentSDKVersion = android.os.Build.VERSION.SDK_INT;
+        int androidOversion = android.os.Build.VERSION_CODES.O;
         //Add the view to the window.
         final WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_PHONE,
+                currentSDKVersion >= androidOversion ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : WindowManager.LayoutParams.TYPE_PHONE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT);
 
@@ -130,6 +183,135 @@ public class FloatingWidgetService extends Service implements View.OnClickListen
         expandedView = mFloatingWidgetView.findViewById(R.id.expanded_container);
 
         mfloatingWidgetTitleLabel = mFloatingWidgetView.findViewById(R.id.floating_widget_title_label);
+
+        colorMatchTabLayout = mFloatingWidgetView.findViewById(R.id.colorMatchTabLayout);
+
+        String[] colorsArray = getResources().getStringArray(R.array.colors);
+        TypedArray iconsArray = getResources().obtainTypedArray(R.array.icons);
+        String[] textsArray = getResources().getStringArray(R.array.texts);
+
+        for (int index = 0; index < colorsArray.length; index++) {
+            String tabName = textsArray[index];
+            int selectedColor = Color.parseColor(colorsArray[index]);
+            Drawable icon = iconsArray.getDrawable(index);
+            colorMatchTabLayout.addTab(ColorTabAdapter.createColorTab(colorMatchTabLayout, tabName, selectedColor, icon));
+        }
+
+        colorMatchTabLayout.addOnColorTabSelectedListener(new OnColorTabSelectedListener() {
+            @Override
+            public void onSelectedTab(@org.jetbrains.annotations.Nullable ColorTab tab) {
+                switch (tab.getPosition()) {
+                    case 0:
+                        showWordSearch();
+                        break;
+                    case 1:
+                        showWebCambridge();
+                        break;
+                    case 2:
+                        showContextReverse();
+                        break;
+                }
+            }
+
+            @Override
+            public void onUnselectedTab(@org.jetbrains.annotations.Nullable ColorTab tab) {
+//                Toast.makeText(getApplicationContext(), "onUnselectedTab", Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private void showWebCambridge() {
+        contenedorView.removeAllViews();
+        contenedorView.addView(LayoutInflater.from(getApplicationContext()).inflate(R.layout.web_cambridge, contenedorView, false));
+        final ProgressBar pb = contenedorView.findViewById(R.id.web_progress);
+        WebView myWebView = mFloatingWidgetView.findViewById(R.id.webView);
+        myWebView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                view.loadUrl(url);
+                return true;
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                pb.setVisibility(View.VISIBLE);
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                pb.setVisibility(View.GONE);
+            }
+        });
+        myWebView.getSettings().setJavaScriptEnabled(true);
+        myWebView.loadUrl("https://dictionary.cambridge.org/dictionary/english-spanish/" + wordSearch.trim().toLowerCase());
+    }
+
+    private void showContextReverse() {
+        contenedorView.removeAllViews();
+        contenedorView.addView(LayoutInflater.from(getApplicationContext()).inflate(R.layout.web_cambridge, contenedorView, false));
+        final ProgressBar pb = contenedorView.findViewById(R.id.web_progress);
+        WebView myWebView = mFloatingWidgetView.findViewById(R.id.webView);
+        myWebView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                view.loadUrl(url);
+                return true;
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                pb.setVisibility(View.VISIBLE);
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                pb.setVisibility(View.GONE);
+            }
+        });
+        myWebView.getSettings().setJavaScriptEnabled(true);
+        myWebView.loadUrl("https://context.reverso.net/traduccion/ingles-espanol/" + wordSearch.trim().toLowerCase());
+    }
+
+    private void showWordSearch() {
+        contenedorView.removeAllViews();
+        contenedorView.addView(LayoutInflater.from(getApplicationContext()).inflate(R.layout.search_word, contenedorView, false));
+        TextView searchProgress = contenedorView.findViewById(R.id.search_progress);
+        if (wordSearch == null || wordSearch.isEmpty()) {
+            searchProgress.setVisibility(View.VISIBLE);
+            return;
+        }
+        searchProgress.setVisibility(View.GONE);
+        wordDao = CambridgeDatabase.getDatabase(getApplication()).wordDao();
+        Word word = wordDao.findDirectorById(wordSearch.toLowerCase());
+        if (word == null) {
+            DataService service = ApiClientInstance.getApiInstance().create(DataService.class);
+            Call<Word> call = service.getWord(wordSearch);
+            call.enqueue(new Callback<Word>() {
+                @Override
+                public void onResponse(Call<Word> call, Response<Word> response) {
+                    if (response.body() == null) {
+                        return;
+                    }
+                    wordDao.insert(response.body());
+                    Toast.makeText(getApplicationContext(), wordSearch, Toast.LENGTH_SHORT).show();
+                    showWord(expandedView, response.body());
+                    openExandedView();
+                }
+
+                @Override
+                public void onFailure(Call<Word> call, Throwable t) {
+                    Toast.makeText(getApplicationContext(), "Something went wrong...Please try later!", Toast.LENGTH_SHORT).show();
+                }
+            });
+        } else {
+            Toast.makeText(getApplicationContext(), wordSearch, Toast.LENGTH_LONG).show();
+            showWord(expandedView, word);
+            openExandedView();
+        }
     }
 
     private void getWindowManagerDefaultDisplay() {
@@ -148,9 +330,67 @@ public class FloatingWidgetService extends Service implements View.OnClickListen
                 public void onPrimaryClipChanged() {
                     Log.d(TAG, "onPrimaryClipChanged");
                     ClipData clip = mClipboardManager.getPrimaryClip();
-                    mfloatingWidgetTitleLabel.setText(clip.getItemAt(0).getText());
+
+                    wordSearch = String.valueOf(clip.getItemAt(0).getText()).trim().toLowerCase();
+                    mfloatingWidgetTitleLabel.setText(wordSearch);
+                    showWordSearch();
                 }
             };
+
+    private void showWord(View view, final Word word) {
+        if (word == null) {
+            return;
+        }
+        TextView lbl_word_search = view.findViewById(R.id.lbl_word_search);
+        TextView lbl_word_category = view.findViewById(R.id.lbl_word_category);
+        TextView lbl_word_pron_uk = view.findViewById(R.id.lbl_word_pron_uk);
+        TextView lbl_word_pron_us = view.findViewById(R.id.lbl_word_pron_us);
+        TextView lbl_word_translate = view.findViewById(R.id.lbl_word_translate);
+
+        lbl_word_search.setText(word.word);
+        lbl_word_category.setText(word.category);
+        lbl_word_pron_uk.setText(word.ukPronText);
+        lbl_word_pron_us.setText(word.usPronText);
+        lbl_word_translate.setText(word.translate);
+
+        view.findViewById(R.id.btn_pron_uk_audio).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+
+                if(word.ukPronAudioUrl.equals("https://dictionary.cambridge.orgundefined")) {
+                    Toast.makeText(getApplicationContext(), "No se encontro audio", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                Toast.makeText(getApplicationContext(), "UK audio", Toast.LENGTH_LONG).show();
+                playAudio(view, word.ukPronAudioUrl);
+            }
+        });
+
+        view.findViewById(R.id.btn_pron_us_audio).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if(word.usPronAudioUrl.equals("https://dictionary.cambridge.orgundefined")) {
+                    Toast.makeText(getApplicationContext(), "No se encontro audio", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                Toast.makeText(getApplicationContext(), "US audio", Toast.LENGTH_LONG).show();
+                playAudio(view, word.usPronAudioUrl);
+            }
+        });
+    }
+
+    public void playAudio(View v, String urlAudio) {
+        Uri myUri = Uri.parse(urlAudio);
+        MediaPlayer mp = new MediaPlayer();
+        try {
+            mp.setDataSource(getApplicationContext(), myUri);
+            mp.setAudioStreamType(AudioManager.STREAM_MUSIC);
+            mp.prepare();
+            mp.start();
+        } catch (IOException e) {
+            Log.e("Audio", "prepare() failed");
+        }
+    }
 
     /*  Implement Touch Listener to Floating Widget Root View  */
     private void implementTouchListenerToFloatingWidgetView() {
@@ -345,9 +585,9 @@ public class FloatingWidgetService extends Service implements View.OnClickListen
         }
     }
 
-    public static void openExandedView() {
-        //collapsedView.setVisibility(View.VISIBLE);
-        //expandedView.setVisibility(View.GONE);
+    public void openExandedView() {
+        collapsedView.setVisibility(View.GONE);
+        expandedView.setVisibility(View.VISIBLE);
     }
 
     /*  on Floating Widget Long Click, increase the size of remove view as it look like taking focus */

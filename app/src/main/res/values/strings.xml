@@ -4,5 +4,8 @@
     <string name="floating_widget_label">Cambridge Dictionary</string>
     <string name="floating_widget_app_name">Cambridge Dictionary</string>
     <string name="draw_other_app_permission_denied">Draw over other app permission not available. App won\'t work without permission. Please try again.</string>
+    <string name="tab_1_name">Definicion</string>
+    <string name="tab_2_name">Web</string>
+    <string name="tab_3_name">Context Reverso</string>
 </resources>
 

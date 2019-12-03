@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="colors">
+        <item>#3DB4F8</item>
+        <item>#F89900</item>
+        <item>#EB8487</item>
+    </string-array>
+    <integer-array name="icons">
+        <item>@drawable/book_open_page_variant</item>
+        <item>@drawable/web</item>
+        <item>@drawable/history</item>
+    </integer-array>
+    <string-array name="texts">
+        <item>@string/tab_1_name</item>
+        <item>@string/tab_2_name</item>
+        <item>@string/tab_3_name</item>
+    </string-array>
+</resources>
